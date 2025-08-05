@@ -12,9 +12,12 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/ristryder/maydinhed/raft"
+	"github.com/ristryder/maydinhed/stores"
+	mvalkey "github.com/ristryder/maydinhed/stores/valkey"
+	"github.com/valkey-io/valkey-go"
 )
 
-func joinCluster(leaderAddress string, node *raft.Node) error {
+func joinCluster[K stores.StoreKey](leaderAddress string, node *raft.Node[K]) error {
 	requestBytes, marshalErr := json.Marshal(map[string]string{"address": node.RaftAddress, "id": node.Id})
 	if marshalErr != nil {
 		return errors.Wrap(marshalErr, "failed to serialize join request")
@@ -43,7 +46,14 @@ func main() {
 	flag.StringVar(&raftDirectory, "raftDirectory", "", "Directory to store Raft data")
 	flag.Parse()
 
-	node := raft.NewNode(nodeId, true, raftAddress, raftDirectory)
+	valkeyStore, valkeyStoreErr := mvalkey.New[string](valkey.ClientOption{
+		EnableReplicaAZInfo: true,
+		InitAddress:         []string{"address.example.com:6379"},
+	})
+	if valkeyStoreErr != nil {
+		log.Fatal(valkeyStoreErr)
+	}
+	node := raft.NewNode(nodeId, true, raftAddress, raftDirectory, valkeyStore)
 
 	isLeader := leaderAddress == ""
 

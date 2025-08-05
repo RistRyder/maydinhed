@@ -6,26 +6,27 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
+	"github.com/ristryder/maydinhed/stores"
 )
 
-type HttpListener struct {
+type HttpListener[K stores.StoreKey] struct {
 	address  string
 	listener net.Listener
-	store    Store
+	store    StoreNode[K]
 }
 
-func NewHttpListener(address string, store Store) *HttpListener {
-	return &HttpListener{
+func NewHttpListener[K stores.StoreKey](address string, store StoreNode[K]) *HttpListener[K] {
+	return &HttpListener[K]{
 		address: address,
 		store:   store,
 	}
 }
 
-func (l *HttpListener) Close() error {
+func (l *HttpListener[K]) Close() error {
 	return l.listener.Close()
 }
 
-func (l *HttpListener) Start() error {
+func (l *HttpListener[K]) Start() error {
 	httpHandler := NewHttpHandler(l.store)
 
 	httpServer := http.Server{

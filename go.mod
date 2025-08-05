@@ -4,8 +4,10 @@ go 1.24.4
 
 require (
 	github.com/cockroachdb/errors v1.12.0
+	github.com/govalues/decimal v0.1.36
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/valkey-io/valkey-go v1.0.63
 )
 
 require (

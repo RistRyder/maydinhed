@@ -9,6 +9,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"github.com/ristryder/maydinhed/stores"
 )
 
 const (
@@ -16,25 +17,32 @@ const (
 	retainSnapshotCount = 2
 )
 
-type Node struct {
+type Node[K stores.StoreKey] struct {
 	Id          string
 	RaftAddress string
 
 	inMemory      bool
 	raftDirectory string
 	raftNode      *raft.Raft
+	storeImpl     stores.Store[K]
 }
 
-func NewNode(id string, inMemory bool, raftAddress, raftDirectory string) *Node {
-	return &Node{
+type StoreNode[K stores.StoreKey] interface {
+	stores.Store[K]
+	AddNode(address, id string) error
+}
+
+func NewNode[K stores.StoreKey](id string, inMemory bool, raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
+	return &Node[K]{
 		Id:            id,
 		inMemory:      inMemory,
 		RaftAddress:   raftAddress,
 		raftDirectory: raftDirectory,
+		storeImpl:     storeImpl,
 	}
 }
 
-func (n *Node) AddNode(address, nodeId string) error {
+func (n *Node[K]) AddNode(address, nodeId string) error {
 	raftConfig := n.raftNode.GetConfiguration()
 	if raftConfigErr := raftConfig.Error(); raftConfigErr != nil {
 		return errors.Wrap(raftConfigErr, "failed to retrieve Raft configuration")
@@ -61,17 +69,15 @@ func (n *Node) AddNode(address, nodeId string) error {
 	return nil
 }
 
-func (n *Node) Delete(key StoreKey) error {
-	//TODO: Do
-	return nil
+func (n *Node[K]) Delete(key K) error {
+	return n.storeImpl.Delete(key)
 }
 
-func (n *Node) Get(key StoreKey) (StoreValue, error) {
-	//TODO: Do
-	return nil, nil
+func (n *Node[K]) Get(key K) (stores.Location, error) {
+	return n.storeImpl.Get(key)
 }
 
-func (n *Node) Open(bootstrap bool, localNodeId string) error {
+func (n *Node[K]) Open(bootstrap bool, localNodeId string) error {
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(localNodeId)
 
@@ -105,7 +111,7 @@ func (n *Node) Open(bootstrap bool, localNodeId string) error {
 		stableStore = boltDb
 	}
 
-	raftNode, raftErr := raft.NewRaft(raftConfig, (*raftFsm)(n), logStore, stableStore, snapshots, transport)
+	raftNode, raftErr := raft.NewRaft(raftConfig, (*RaftFsm[K])(n), logStore, stableStore, snapshots, transport)
 	if raftErr != nil {
 		return errors.Wrap(raftErr, "failed to initialize Raft node")
 	}
@@ -130,7 +136,6 @@ func (n *Node) Open(bootstrap bool, localNodeId string) error {
 	return nil
 }
 
-func (n *Node) Set(key StoreKey, value StoreValue) error {
-	//TODO: Do
-	return nil
+func (n *Node[K]) Set(key K, value stores.Location) error {
+	return n.Set(key, value)
 }
