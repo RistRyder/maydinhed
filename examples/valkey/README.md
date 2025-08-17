@@ -1,4 +1,4 @@
-# Start maydinhed
+# Start maydinhed with Valkey storage
 This example can be used to bootstrap the cluster with the leader, as well as add followers.
 
 Note that the port numbers and node names used here are just examples.

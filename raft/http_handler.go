@@ -2,25 +2,39 @@ package raft
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
+	"github.com/govalues/decimal"
 	"github.com/ristryder/maydinhed/stores"
 )
 
 type HttpHandler[K stores.StoreKey] struct {
-	EnableEgress  bool
-	EnableIngress bool
-	store         StoreNode[K]
+	nodeConfiguration NodeConfiguration
+	store             StoreNode[K]
+}
+
+type updateLocationRequest[K stores.StoreKey] struct {
+	Id       K               `json:"id"`
+	Location stores.Location `json:"l"`
 }
 
 func (h *HttpHandler[K]) handleGetLocationRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	if !h.EnableEgress {
+	if !h.nodeConfiguration.EnableEgress {
 		responseWriter.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
 
 	//TODO: Do
+	var key interface{} = "test-key"
+	setErr := h.store.Set(key.(K), stores.Location{
+		Latitude:  decimal.Hundred,
+		Longitude: decimal.Hundred,
+	})
+	if setErr != nil {
+		log.Println(setErr)
+	}
 }
 
 func (h *HttpHandler[K]) handleJoinRequest(responseWriter http.ResponseWriter, request *http.Request) {
@@ -59,18 +73,40 @@ func (h *HttpHandler[K]) handleJoinRequest(responseWriter http.ResponseWriter, r
 }
 
 func (h *HttpHandler[K]) handleUpdateLocationRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	if !h.EnableIngress {
+	if !h.nodeConfiguration.EnableIngress {
 		responseWriter.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
 
-	//TODO: Do
+	updateLocationRequest := updateLocationRequest[K]{}
+	if decodeErr := json.NewDecoder(request.Body).Decode(&updateLocationRequest); decodeErr != nil {
+		responseWriter.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+
+	if !h.nodeConfiguration.ValidateLocationUpdate {
+		h.store.SetAndForget(updateLocationRequest.Id, updateLocationRequest.Location)
+
+		responseWriter.WriteHeader(http.StatusOK)
+
+		return
+	}
+
+	if setResult := h.store.Set(updateLocationRequest.Id, updateLocationRequest.Location); setResult != nil {
+		responseWriter.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+
+	responseWriter.WriteHeader(http.StatusOK)
 }
 
-func NewHttpHandler[K stores.StoreKey](store StoreNode[K]) *HttpHandler[K] {
+func NewHttpHandler[K stores.StoreKey](nodeConfiguration NodeConfiguration, store StoreNode[K]) *HttpHandler[K] {
 	return &HttpHandler[K]{
-		store: store,
+		nodeConfiguration: nodeConfiguration,
+		store:             store,
 	}
 }
 

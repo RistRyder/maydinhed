@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"encoding/json"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"github.com/ristryder/maydinhed/messaging"
 	"github.com/ristryder/maydinhed/stores"
 )
 
@@ -22,6 +25,7 @@ type Node[K stores.StoreKey] struct {
 	RaftAddress string
 
 	inMemory      bool
+	messengerImpl messaging.Messenger[K]
 	raftDirectory string
 	raftNode      *raft.Raft
 	storeImpl     stores.Store[K]
@@ -32,10 +36,11 @@ type StoreNode[K stores.StoreKey] interface {
 	AddNode(address, id string) error
 }
 
-func NewNode[K stores.StoreKey](id string, inMemory bool, raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
+func NewNode[K stores.StoreKey](id string, inMemory bool, messengerImpl messaging.Messenger[K], raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
 	return &Node[K]{
 		Id:            id,
 		inMemory:      inMemory,
+		messengerImpl: messengerImpl,
 		RaftAddress:   raftAddress,
 		raftDirectory: raftDirectory,
 		storeImpl:     storeImpl,
@@ -70,7 +75,16 @@ func (n *Node[K]) AddNode(address, nodeId string) error {
 }
 
 func (n *Node[K]) Delete(key K) error {
-	return n.storeImpl.Delete(key)
+	deleteCommand := &stores.Command[K]{
+		Key:       key,
+		Operation: "delete",
+	}
+	deleteCommandBytes, marshalErr := json.Marshal(deleteCommand)
+	if marshalErr != nil {
+		return errors.Wrap(marshalErr, "failed to marshal delete command")
+	}
+
+	return n.raftNode.Apply(deleteCommandBytes, raftTimeout).Error()
 }
 
 func (n *Node[K]) Get(key K) (stores.Location, error) {
@@ -137,5 +151,49 @@ func (n *Node[K]) Open(bootstrap bool, localNodeId string) error {
 }
 
 func (n *Node[K]) Set(key K, value stores.Location) error {
-	return n.Set(key, value)
+	setCommand := &stores.Command[K]{
+		Key:       key,
+		Operation: "set",
+		Value:     value,
+	}
+	setCommandBytes, marshalErr := json.Marshal(setCommand)
+	if marshalErr != nil {
+		return errors.Wrap(marshalErr, "failed to marshal set command")
+	}
+
+	if applyErr := n.raftNode.Apply(setCommandBytes, raftTimeout).Error(); applyErr != nil {
+		return errors.Wrap(applyErr, "failed to apply set command")
+	}
+
+	if messengerErr := n.messengerImpl.SendLocationUpdate(key, value); messengerErr != nil {
+		return errors.Wrap(messengerErr, "failed to send location update message")
+	}
+
+	return nil
+}
+
+func (n *Node[K]) SetAndForget(key K, value stores.Location) {
+	go func() {
+		setCommand := &stores.Command[K]{
+			Key:       key,
+			Operation: "set",
+			Value:     value,
+		}
+		setCommandBytes, marshalErr := json.Marshal(setCommand)
+		if marshalErr != nil {
+			log.Println("failed to marshal set command: ", marshalErr)
+
+			return
+		}
+
+		if applyErr := n.raftNode.Apply(setCommandBytes, raftTimeout).Error(); applyErr != nil {
+			log.Println("failed to apply set command: ", applyErr)
+		}
+	}()
+
+	go func() {
+		if messengerErr := n.messengerImpl.SendLocationUpdate(key, value); messengerErr != nil {
+			log.Println("failed to send location update message: ", messengerErr)
+		}
+	}()
 }

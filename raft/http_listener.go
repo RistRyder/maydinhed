@@ -10,16 +10,18 @@ import (
 )
 
 type HttpListener[K stores.StoreKey] struct {
-	address  string
-	listener net.Listener
-	store    StoreNode[K]
+	address           string
+	listener          net.Listener
+	nodeConfiguration *NodeConfiguration
+	store             StoreNode[K]
 }
 
-func NewHttpListener[K stores.StoreKey](address string, store StoreNode[K]) *HttpListener[K] {
+func NewHttpListener[K stores.StoreKey](address string, nodeConfiguration NodeConfiguration, store StoreNode[K]) (*HttpListener[K], error) {
 	return &HttpListener[K]{
-		address: address,
-		store:   store,
-	}
+		address:           address,
+		nodeConfiguration: &nodeConfiguration,
+		store:             store,
+	}, nil
 }
 
 func (l *HttpListener[K]) Close() error {
@@ -27,7 +29,7 @@ func (l *HttpListener[K]) Close() error {
 }
 
 func (l *HttpListener[K]) Start() error {
-	httpHandler := NewHttpHandler(l.store)
+	httpHandler := NewHttpHandler(*l.nodeConfiguration, l.store)
 
 	httpServer := http.Server{
 		Handler: httpHandler,

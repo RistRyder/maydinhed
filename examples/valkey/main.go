@@ -11,6 +11,8 @@ import (
 	"os/signal"
 
 	"github.com/cockroachdb/errors"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
+	mkafka "github.com/ristryder/maydinhed/messaging/kafka"
 	"github.com/ristryder/maydinhed/raft"
 	"github.com/ristryder/maydinhed/stores"
 	mvalkey "github.com/ristryder/maydinhed/stores/valkey"
@@ -46,14 +48,26 @@ func main() {
 	flag.StringVar(&raftDirectory, "raftDirectory", "", "Directory to store Raft data")
 	flag.Parse()
 
+	nodeConfiguration := raft.NewNodeConfiguration(true, true, false)
+
+	kafkaMessenger, kafkaMessengerErr := mkafka.New[string](&kafka.ConfigMap{
+		//User-specific properties that you must set
+		"bootstrap.servers": "localhost:9092",
+
+		//Fixed properties
+		"acks": "all"})
+	if kafkaMessengerErr != nil {
+		log.Fatal(kafkaMessengerErr)
+	}
+
 	valkeyStore, valkeyStoreErr := mvalkey.New[string](valkey.ClientOption{
 		EnableReplicaAZInfo: true,
-		InitAddress:         []string{"address.example.com:6379"},
+		InitAddress:         []string{"localhost:6379"},
 	})
 	if valkeyStoreErr != nil {
 		log.Fatal(valkeyStoreErr)
 	}
-	node := raft.NewNode(nodeId, true, raftAddress, raftDirectory, valkeyStore)
+	node := raft.NewNode(nodeId, true, kafkaMessenger, raftAddress, raftDirectory, valkeyStore)
 
 	isLeader := leaderAddress == ""
 
@@ -68,7 +82,11 @@ func main() {
 		log.Fatal(openErr)
 	}
 
-	listener := raft.NewHttpListener(httpAddress, node)
+	listener, listenerErr := raft.NewHttpListener(httpAddress, *nodeConfiguration, node)
+	if listenerErr != nil {
+		log.Fatal(listenerErr)
+	}
+
 	if listenerStartErr := listener.Start(); listenerStartErr != nil {
 		log.Fatal(listenerStartErr)
 	}
