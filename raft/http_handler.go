@@ -2,10 +2,8 @@ package raft
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
-	"github.com/govalues/decimal"
 	"github.com/ristryder/maydinhed/stores"
 )
 
@@ -27,14 +25,6 @@ func (h *HttpHandler[K]) handleGetLocationRequest(responseWriter http.ResponseWr
 	}
 
 	//TODO: Do
-	var key interface{} = "test-key"
-	setErr := h.store.Set(key.(K), stores.Location{
-		Latitude:  decimal.Hundred,
-		Longitude: decimal.Hundred,
-	})
-	if setErr != nil {
-		log.Println(setErr)
-	}
 }
 
 func (h *HttpHandler[K]) handleJoinRequest(responseWriter http.ResponseWriter, request *http.Request) {

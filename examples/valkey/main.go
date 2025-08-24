@@ -11,7 +11,7 @@ import (
 	"os/signal"
 
 	"github.com/cockroachdb/errors"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	mkafka "github.com/ristryder/maydinhed/messaging/kafka"
 	"github.com/ristryder/maydinhed/raft"
 	"github.com/ristryder/maydinhed/stores"
@@ -50,12 +50,11 @@ func main() {
 
 	nodeConfiguration := raft.NewNodeConfiguration(true, true, false)
 
-	kafkaMessenger, kafkaMessengerErr := mkafka.New[string](&kafka.ConfigMap{
-		//User-specific properties that you must set
+	kafkaOptions := &kafka.ConfigMap{
 		"bootstrap.servers": "localhost:9092",
-
-		//Fixed properties
-		"acks": "all"})
+		"acks":              "all",
+		"auto.offset.reset": "latest"}
+	kafkaMessenger, kafkaMessengerErr := mkafka.New[string](kafkaOptions, nil, kafkaOptions)
 	if kafkaMessengerErr != nil {
 		log.Fatal(kafkaMessengerErr)
 	}

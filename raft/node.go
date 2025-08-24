@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net"
@@ -24,16 +25,80 @@ type Node[K stores.StoreKey] struct {
 	Id          string
 	RaftAddress string
 
-	inMemory      bool
-	messengerImpl messaging.Messenger[K]
-	raftDirectory string
-	raftNode      *raft.Raft
-	storeImpl     stores.Store[K]
+	inMemory              bool
+	isLeader              bool
+	messengerImpl         messaging.Messenger[K]
+	raftDirectory         string
+	raftNode              *raft.Raft
+	raftObserver          *raft.Observer
+	raftObserverCtx       context.Context
+	raftObserverCtxCancel context.CancelFunc
+	storeImpl             stores.Store[K]
 }
 
 type StoreNode[K stores.StoreKey] interface {
 	stores.Store[K]
 	AddNode(address, id string) error
+	Shutdown() error
+}
+
+func (n *Node[K]) transitionToFollower() {
+	n.isLeader = false
+
+	if messengerStopErr := n.messengerImpl.StopListening(); messengerStopErr != nil {
+		log.Println("raft state changed, we are currently not leader but failed to stop messaging consumer")
+	} else {
+		log.Println("raft state changed, we are currently not leader, messaging consumer stopped")
+	}
+}
+
+func (n *Node[K]) transitionToLeader() {
+	n.isLeader = true
+
+	if messengerStartErr := n.messengerImpl.StartListening(); messengerStartErr != nil {
+		log.Println("raft state changed, we are currently leader but failed to start messaging consumer")
+	} else {
+		log.Println("raft state changed, we are currently leader, messaging consumer started")
+	}
+}
+
+func (n *Node[K]) watchRaftState() {
+	observationChannel := make(chan raft.Observation)
+
+	go func() {
+		for {
+			select {
+			case <-n.raftObserverCtx.Done():
+				log.Println("stopping raft observer")
+				return
+			case <-observationChannel:
+				if n.raftNode.State() == raft.Leader {
+					n.transitionToLeader()
+				} else {
+					n.transitionToFollower()
+				}
+			case <-time.After(time.Second):
+				if n.raftNode.State() == raft.Leader && !n.isLeader {
+					n.transitionToLeader()
+				} else if n.raftNode.State() != raft.Leader && n.isLeader {
+					n.transitionToFollower()
+				}
+			}
+		}
+	}()
+
+	n.raftObserver = raft.NewObserver(observationChannel, true, func(o *raft.Observation) bool {
+		switch o.Data.(type) {
+		case raft.LeaderObservation:
+			return true
+		default:
+			return false
+		}
+	})
+
+	n.raftObserverCtx, n.raftObserverCtxCancel = context.WithCancel(context.Background())
+
+	n.raftNode.RegisterObserver(n.raftObserver)
 }
 
 func NewNode[K stores.StoreKey](id string, inMemory bool, messengerImpl messaging.Messenger[K], raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
@@ -131,6 +196,8 @@ func (n *Node[K]) Open(bootstrap bool, localNodeId string) error {
 	}
 	n.raftNode = raftNode
 
+	n.watchRaftState()
+
 	if bootstrap {
 		configuration := raft.Configuration{
 			Servers: []raft.Server{
@@ -196,4 +263,12 @@ func (n *Node[K]) SetAndForget(key K, value stores.Location) {
 			log.Println("failed to send location update message: ", messengerErr)
 		}
 	}()
+}
+
+func (n *Node[K]) Shutdown() error {
+	n.raftObserverCtxCancel()
+
+	n.raftNode.DeregisterObserver(n.raftObserver)
+
+	return n.raftNode.Shutdown().Error()
 }
