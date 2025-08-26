@@ -65,6 +65,8 @@ func (n *Node[K]) transitionToLeader() {
 func (n *Node[K]) watchRaftState() {
 	observationChannel := make(chan raft.Observation)
 
+	n.raftObserverCtx, n.raftObserverCtxCancel = context.WithCancel(context.Background())
+
 	go func() {
 		for {
 			select {
@@ -95,8 +97,6 @@ func (n *Node[K]) watchRaftState() {
 			return false
 		}
 	})
-
-	n.raftObserverCtx, n.raftObserverCtxCancel = context.WithCancel(context.Background())
 
 	n.raftNode.RegisterObserver(n.raftObserver)
 }

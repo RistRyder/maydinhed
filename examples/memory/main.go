@@ -15,8 +15,7 @@ import (
 	mkafka "github.com/ristryder/maydinhed/messaging/kafka"
 	"github.com/ristryder/maydinhed/raft"
 	"github.com/ristryder/maydinhed/stores"
-	mvalkey "github.com/ristryder/maydinhed/stores/valkey"
-	"github.com/valkey-io/valkey-go"
+	"github.com/ristryder/maydinhed/stores/memory"
 )
 
 func joinCluster[K stores.StoreKey](leaderAddress string, node *raft.Node[K]) error {
@@ -59,14 +58,11 @@ func main() {
 		log.Fatal(kafkaMessengerErr)
 	}
 
-	valkeyStore, valkeyStoreErr := mvalkey.New[string](valkey.ClientOption{
-		EnableReplicaAZInfo: true,
-		InitAddress:         []string{"localhost:6379"},
-	})
-	if valkeyStoreErr != nil {
-		log.Fatal(valkeyStoreErr)
+	memoryStore, memoryStoreErr := memory.New[string]()
+	if memoryStoreErr != nil {
+		log.Fatal(memoryStoreErr)
 	}
-	node := raft.NewNode(nodeId, true, kafkaMessenger, raftAddress, raftDirectory, valkeyStore)
+	node := raft.NewNode(nodeId, true, kafkaMessenger, raftAddress, raftDirectory, memoryStore)
 
 	isLeader := leaderAddress == ""
 

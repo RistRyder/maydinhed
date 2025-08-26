@@ -87,22 +87,16 @@ func (m *Messenger[K]) startDeliveryReportHandler() {
 						log.Printf("successfully delivered Kafka message to %v\n", typedEvent.TopicPartition)
 					}
 				}
-			default:
-				//Carry on
 			}
 		}
 	}()
 }
 
 func (m *Messenger[K]) Close() error {
-	if m.consumerCtx != nil {
-		m.consumerCtxCancel()
-	}
-
+	m.consumerCtxCancel()
 	m.producerCtxCancel()
 
 	m.producer.Close()
-
 	return m.consumer.Close()
 }
 
@@ -204,9 +198,6 @@ func (m *Messenger[K]) StopListening() error {
 	}
 
 	m.consumerCtxCancel()
-
-	m.consumerCtx = nil
-	m.consumerCtxCancel = nil
 
 	return nil
 }
