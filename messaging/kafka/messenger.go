@@ -3,13 +3,14 @@ package kafka
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"log"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/google/uuid"
-	"github.com/ristryder/maydinhed/stores"
+	"github.com/ristryder/maydinhed/mapping"
 )
 
 const (
@@ -18,11 +19,12 @@ const (
 	topicCreationTimeout      = 30 * time.Second
 )
 
-type Messenger[K stores.StoreKey] struct {
+type Messenger[K mapping.ClusteredMarkerKey] struct {
 	consumer          *kafka.Consumer
 	consumerCtx       context.Context
 	consumerCtxCancel context.CancelFunc
 	locationTopicName string
+	markerCluster     *mapping.MarkerCluster[K]
 	producer          *kafka.Producer
 	producerCtx       context.Context
 	producerCtxCancel context.CancelFunc
@@ -50,12 +52,29 @@ func createTopics(kafkaOptions *kafka.ConfigMap, locationTopic *kafka.TopicSpeci
 	return errors.Wrap(createTopicsErr, "failed to create location topic")
 }
 
+func (m *Messenger[K]) processLocationMessage(message *kafka.Message) error {
+	keyedLocation := &mapping.KeyedLocation[K]{}
+	if unmarshalErr := json.Unmarshal(message.Value, keyedLocation); unmarshalErr != nil {
+		return errors.Wrap(unmarshalErr, "failed to unmarshal location message")
+	}
+
+	if markerClusterAddErr := m.markerCluster.Add(*mapping.NewClusteredMarker(*keyedLocation)); markerClusterAddErr != nil {
+		return errors.Wrap(markerClusterAddErr, "failed to add marker to cluster")
+	}
+
+	return nil
+}
+
 func (m *Messenger[K]) startConsumerLoop() {
 	go func() {
 		for {
 			message, messageErr := m.consumer.ReadMessage(messageReadTimeout)
 			if messageErr == nil {
-				log.Printf("consumed event from topic '%s': key = %s , value = %s\n", *message.TopicPartition.Topic, string(message.Key), string(message.Value))
+				if processLocationErr := m.processLocationMessage(message); processLocationErr != nil {
+					log.Printf("failed to process location message from topic '%s': key = %s , value = %s, error = %s\n", *message.TopicPartition.Topic, string(message.Key), string(message.Value), processLocationErr)
+				} else {
+					log.Printf("successfully processed location message from topic '%s': key = %s , value = %s\n", *message.TopicPartition.Topic, string(message.Key), string(message.Value))
+				}
 			} else if !messageErr.(kafka.Error).IsTimeout() {
 				log.Printf("failed to read Kafka message: %v (%v)\n", messageErr, message)
 			}
@@ -93,14 +112,18 @@ func (m *Messenger[K]) startDeliveryReportHandler() {
 }
 
 func (m *Messenger[K]) Close() error {
-	m.consumerCtxCancel()
-	m.producerCtxCancel()
+	if m.consumerCtxCancel != nil {
+		m.consumerCtxCancel()
+	}
+	if m.producerCtxCancel != nil {
+		m.producerCtxCancel()
+	}
 
 	m.producer.Close()
 	return m.consumer.Close()
 }
 
-func New[K stores.StoreKey](consumerOptions *kafka.ConfigMap, locationTopic *kafka.TopicSpecification, producerOptions *kafka.ConfigMap) (*Messenger[K], error) {
+func New[K mapping.ClusteredMarkerKey](consumerOptions *kafka.ConfigMap, locationTopic *kafka.TopicSpecification, markerCluster mapping.MarkerCluster[K], producerOptions *kafka.ConfigMap) (*Messenger[K], error) {
 	producer, producerErr := kafka.NewProducer(producerOptions)
 	if producerErr != nil {
 		return nil, errors.Wrap(producerErr, "failed to create Kafka producer")
@@ -132,6 +155,7 @@ func New[K stores.StoreKey](consumerOptions *kafka.ConfigMap, locationTopic *kaf
 	newMessenger := &Messenger[K]{
 		consumer:          consumer,
 		locationTopicName: locationTopicName,
+		markerCluster:     &markerCluster,
 		producer:          producer,
 		producerCtx:       producerCtx,
 		producerCtxCancel: producerCtxCancel,
@@ -142,14 +166,14 @@ func New[K stores.StoreKey](consumerOptions *kafka.ConfigMap, locationTopic *kaf
 	return newMessenger, nil
 }
 
-func (m *Messenger[K]) SendLocationUpdate(key K, value stores.Location) error {
-	locationBytes, locationErr := value.Bytes()
+func (m *Messenger[K]) SendLocationUpdate(keyedLocation mapping.KeyedLocation[K]) error {
+	locationBytes, locationErr := json.Marshal(keyedLocation)
 	if locationErr != nil {
 		return errors.Wrap(locationErr, "failed to generate location bytes for update")
 	}
 
 	keyBytes := []byte{}
-	switch typedKey := any(key).(type) {
+	switch typedKey := any(keyedLocation.Id).(type) {
 	case int8:
 		keyBytes = []byte{byte(typedKey)}
 	case uint8:
@@ -181,8 +205,12 @@ func (m *Messenger[K]) SendLocationUpdate(key K, value stores.Location) error {
 }
 
 func (m *Messenger[K]) StartListening() error {
-	if m.consumerCtx != nil {
+	if m.consumerCtxCancel != nil {
 		return nil
+	}
+
+	if markerClusterStartErr := m.markerCluster.StartAutoClustering(); markerClusterStartErr != nil {
+		return errors.Wrap(markerClusterStartErr, "failed to start marker auto clustering")
 	}
 
 	m.consumerCtx, m.consumerCtxCancel = context.WithCancel(context.Background())
@@ -193,11 +221,17 @@ func (m *Messenger[K]) StartListening() error {
 }
 
 func (m *Messenger[K]) StopListening() error {
-	if m.consumerCtx == nil {
+	if m.consumerCtxCancel == nil {
 		return nil
 	}
 
+	if markerClusterStopErr := m.markerCluster.StopAutoClustering(); markerClusterStopErr != nil {
+		return errors.Wrap(markerClusterStopErr, "failed to stop marker auto clustering")
+	}
+
 	m.consumerCtxCancel()
+
+	m.consumerCtxCancel = nil
 
 	return nil
 }

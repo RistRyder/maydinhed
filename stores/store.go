@@ -1,12 +1,12 @@
 package stores
 
-type StoreKey interface {
-	comparable
-}
+import (
+	"github.com/ristryder/maydinhed/mapping"
+)
 
-type Store[K StoreKey] interface {
+type Store[K mapping.ClusteredMarkerKey] interface {
 	Delete(key K) error
-	Get(key K) (Location, error)
-	Set(key K, value Location) error
-	SetAndForget(key K, value Location)
+	Get(key K) (mapping.Location, error)
+	Set(key K, value mapping.Location) error
+	SetAndForget(key K, value mapping.Location)
 }

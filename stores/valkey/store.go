@@ -4,15 +4,15 @@ import (
 	"log"
 
 	"github.com/cockroachdb/errors"
-	"github.com/ristryder/maydinhed/stores"
+	"github.com/ristryder/maydinhed/mapping"
 	"github.com/valkey-io/valkey-go"
 )
 
-type ValkeyStore[K stores.StoreKey] struct {
+type ValkeyStore[K mapping.ClusteredMarkerKey] struct {
 	client valkey.Client
 }
 
-func New[K stores.StoreKey](valkeyOptions valkey.ClientOption) (*ValkeyStore[K], error) {
+func New[K mapping.ClusteredMarkerKey](valkeyOptions valkey.ClientOption) (*ValkeyStore[K], error) {
 	valkeyClient, valkeyClientErr := valkey.NewClient(valkeyOptions)
 	if valkeyClientErr != nil {
 		return nil, errors.Wrap(valkeyClientErr, "failed to create Valkey client")
@@ -29,18 +29,18 @@ func (v *ValkeyStore[K]) Delete(key K) error {
 	return nil
 }
 
-func (v *ValkeyStore[K]) Get(key K) (stores.Location, error) {
+func (v *ValkeyStore[K]) Get(key K) (mapping.Location, error) {
 	//TODO: Do
 	log.Printf("valkey store Get key %v\n", key)
-	return stores.InvalidLocation, nil
+	return mapping.InvalidLocation, nil
 }
 
-func (v *ValkeyStore[K]) Set(key K, value stores.Location) error {
+func (v *ValkeyStore[K]) Set(key K, value mapping.Location) error {
 	//TODO: Do
 	log.Printf("valkey store Set key %v\n", key)
 	return nil
 }
 
-func (v *ValkeyStore[K]) SetAndForget(key K, value stores.Location) {
+func (v *ValkeyStore[K]) SetAndForget(key K, value mapping.Location) {
 	v.Set(key, value)
 }

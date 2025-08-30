@@ -12,6 +12,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"github.com/ristryder/maydinhed/mapping"
 	"github.com/ristryder/maydinhed/messaging"
 	"github.com/ristryder/maydinhed/stores"
 )
@@ -21,7 +22,7 @@ const (
 	retainSnapshotCount = 2
 )
 
-type Node[K stores.StoreKey] struct {
+type Node[K mapping.ClusteredMarkerKey] struct {
 	Id          string
 	RaftAddress string
 
@@ -36,29 +37,33 @@ type Node[K stores.StoreKey] struct {
 	storeImpl             stores.Store[K]
 }
 
-type StoreNode[K stores.StoreKey] interface {
+type StoreNode[K mapping.ClusteredMarkerKey] interface {
 	stores.Store[K]
 	AddNode(address, id string) error
-	Shutdown() error
+	Shutdown()
 }
 
 func (n *Node[K]) transitionToFollower() {
 	n.isLeader = false
 
+	log.Println("raft state changed, transitioning to follower")
+
 	if messengerStopErr := n.messengerImpl.StopListening(); messengerStopErr != nil {
-		log.Println("raft state changed, we are currently not leader but failed to stop messaging consumer")
+		log.Println("failed to stop messaging consumer after transition to follower", messengerStopErr)
 	} else {
-		log.Println("raft state changed, we are currently not leader, messaging consumer stopped")
+		log.Println("messaging consumer stopped after transition to follower")
 	}
 }
 
 func (n *Node[K]) transitionToLeader() {
 	n.isLeader = true
 
+	log.Println("raft state changed, transitioning to leader")
+
 	if messengerStartErr := n.messengerImpl.StartListening(); messengerStartErr != nil {
-		log.Println("raft state changed, we are currently leader but failed to start messaging consumer")
+		log.Println("failed to start messaging consumer after transition to leader", messengerStartErr)
 	} else {
-		log.Println("raft state changed, we are currently leader, messaging consumer started")
+		log.Println("messaging consumer started after transition to leader")
 	}
 }
 
@@ -101,7 +106,7 @@ func (n *Node[K]) watchRaftState() {
 	n.raftNode.RegisterObserver(n.raftObserver)
 }
 
-func NewNode[K stores.StoreKey](id string, inMemory bool, messengerImpl messaging.Messenger[K], raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
+func NewNode[K mapping.ClusteredMarkerKey](id string, inMemory bool, messengerImpl messaging.Messenger[K], raftAddress, raftDirectory string, storeImpl stores.Store[K]) *Node[K] {
 	return &Node[K]{
 		Id:            id,
 		inMemory:      inMemory,
@@ -152,7 +157,7 @@ func (n *Node[K]) Delete(key K) error {
 	return n.raftNode.Apply(deleteCommandBytes, raftTimeout).Error()
 }
 
-func (n *Node[K]) Get(key K) (stores.Location, error) {
+func (n *Node[K]) Get(key K) (mapping.Location, error) {
 	return n.storeImpl.Get(key)
 }
 
@@ -217,7 +222,7 @@ func (n *Node[K]) Open(bootstrap bool, localNodeId string) error {
 	return nil
 }
 
-func (n *Node[K]) Set(key K, value stores.Location) error {
+func (n *Node[K]) Set(key K, value mapping.Location) error {
 	setCommand := &stores.Command[K]{
 		Key:       key,
 		Operation: "set",
@@ -232,43 +237,30 @@ func (n *Node[K]) Set(key K, value stores.Location) error {
 		return errors.Wrap(applyErr, "failed to apply set command")
 	}
 
-	if messengerErr := n.messengerImpl.SendLocationUpdate(key, value); messengerErr != nil {
+	if messengerErr := n.messengerImpl.SendLocationUpdate(mapping.KeyedLocation[K]{
+		Id:       key,
+		Location: value,
+	}); messengerErr != nil {
 		return errors.Wrap(messengerErr, "failed to send location update message")
 	}
 
 	return nil
 }
 
-func (n *Node[K]) SetAndForget(key K, value stores.Location) {
+func (n *Node[K]) SetAndForget(key K, value mapping.Location) {
 	go func() {
-		setCommand := &stores.Command[K]{
-			Key:       key,
-			Operation: "set",
-			Value:     value,
-		}
-		setCommandBytes, marshalErr := json.Marshal(setCommand)
-		if marshalErr != nil {
-			log.Println("failed to marshal set command: ", marshalErr)
-
-			return
-		}
-
-		if applyErr := n.raftNode.Apply(setCommandBytes, raftTimeout).Error(); applyErr != nil {
-			log.Println("failed to apply set command: ", applyErr)
-		}
-	}()
-
-	go func() {
-		if messengerErr := n.messengerImpl.SendLocationUpdate(key, value); messengerErr != nil {
-			log.Println("failed to send location update message: ", messengerErr)
+		if setErr := n.Set(key, value); setErr != nil {
+			log.Println(setErr)
 		}
 	}()
 }
 
-func (n *Node[K]) Shutdown() error {
+func (n *Node[K]) Shutdown() {
 	n.raftObserverCtxCancel()
 
 	n.raftNode.DeregisterObserver(n.raftObserver)
 
-	return n.raftNode.Shutdown().Error()
+	if raftShutdownErr := n.raftNode.Shutdown().Error(); raftShutdownErr != nil {
+		log.Println(raftShutdownErr)
+	}
 }

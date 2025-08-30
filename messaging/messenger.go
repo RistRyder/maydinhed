@@ -1,12 +1,12 @@
 package messaging
 
 import (
-	"github.com/ristryder/maydinhed/stores"
+	"github.com/ristryder/maydinhed/mapping"
 )
 
-type Messenger[K stores.StoreKey] interface {
+type Messenger[K mapping.ClusteredMarkerKey] interface {
 	Close() error
-	SendLocationUpdate(key K, value stores.Location) error
+	SendLocationUpdate(keyedLocation mapping.KeyedLocation[K]) error
 	StartListening() error
 	StopListening() error
 }

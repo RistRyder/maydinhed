@@ -6,21 +6,21 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
-	"github.com/ristryder/maydinhed/stores"
+	"github.com/ristryder/maydinhed/mapping"
 )
 
-type HttpListener[K stores.StoreKey] struct {
-	address           string
-	listener          net.Listener
-	nodeConfiguration *NodeConfiguration
-	store             StoreNode[K]
+type HttpListener[K mapping.ClusteredMarkerKey] struct {
+	address     string
+	httpHandler *HttpHandler[K]
+	listener    net.Listener
 }
 
-func NewHttpListener[K stores.StoreKey](address string, nodeConfiguration NodeConfiguration, store StoreNode[K]) (*HttpListener[K], error) {
+func NewHttpListener[K mapping.ClusteredMarkerKey](address string, markerCluster mapping.MarkerCluster[K], nodeConfiguration NodeConfiguration, store StoreNode[K]) (*HttpListener[K], error) {
+	httpHandler := NewHttpHandler(markerCluster, nodeConfiguration, store)
+
 	return &HttpListener[K]{
-		address:           address,
-		nodeConfiguration: &nodeConfiguration,
-		store:             store,
+		address:     address,
+		httpHandler: httpHandler,
 	}, nil
 }
 
@@ -29,10 +29,9 @@ func (l *HttpListener[K]) Close() error {
 }
 
 func (l *HttpListener[K]) Start() error {
-	httpHandler := NewHttpHandler(*l.nodeConfiguration, l.store)
 
 	httpServer := http.Server{
-		Handler: httpHandler,
+		Handler: l.httpHandler,
 	}
 
 	tcpListener, tcpListenerErr := net.Listen("tcp", l.address)
@@ -42,7 +41,7 @@ func (l *HttpListener[K]) Start() error {
 
 	l.listener = tcpListener
 
-	http.Handle("/", httpHandler)
+	http.Handle("/", l.httpHandler)
 
 	go func() {
 		serveErr := httpServer.Serve(l.listener)

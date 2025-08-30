@@ -2,19 +2,16 @@ package raft
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
-	"github.com/ristryder/maydinhed/stores"
+	"github.com/ristryder/maydinhed/mapping"
 )
 
-type HttpHandler[K stores.StoreKey] struct {
-	nodeConfiguration NodeConfiguration
+type HttpHandler[K mapping.ClusteredMarkerKey] struct {
+	markerCluster     *mapping.MarkerCluster[K]
+	nodeConfiguration *NodeConfiguration
 	store             StoreNode[K]
-}
-
-type updateLocationRequest[K stores.StoreKey] struct {
-	Id       K               `json:"id"`
-	Location stores.Location `json:"l"`
 }
 
 func (h *HttpHandler[K]) handleGetLocationRequest(responseWriter http.ResponseWriter, request *http.Request) {
@@ -25,6 +22,27 @@ func (h *HttpHandler[K]) handleGetLocationRequest(responseWriter http.ResponseWr
 	}
 
 	//TODO: Do
+	locations, locationsErr := h.markerCluster.GetLocations(mapping.BoundingBox{}, 1)
+	if locationsErr != nil {
+		log.Println(locationsErr)
+
+		responseWriter.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
+
+	locationsBytes, marshalErr := json.Marshal(locations)
+	if marshalErr != nil {
+		log.Println(marshalErr)
+
+		responseWriter.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
+
+	responseWriter.WriteHeader(http.StatusOK)
+
+	responseWriter.Write(locationsBytes)
 }
 
 func (h *HttpHandler[K]) handleJoinRequest(responseWriter http.ResponseWriter, request *http.Request) {
@@ -60,6 +78,8 @@ func (h *HttpHandler[K]) handleJoinRequest(responseWriter http.ResponseWriter, r
 
 		return
 	}
+
+	responseWriter.WriteHeader(http.StatusOK)
 }
 
 func (h *HttpHandler[K]) handleUpdateLocationRequest(responseWriter http.ResponseWriter, request *http.Request) {
@@ -69,22 +89,25 @@ func (h *HttpHandler[K]) handleUpdateLocationRequest(responseWriter http.Respons
 		return
 	}
 
-	updateLocationRequest := updateLocationRequest[K]{}
+	updateLocationRequest := &mapping.Location{}
 	if decodeErr := json.NewDecoder(request.Body).Decode(&updateLocationRequest); decodeErr != nil {
 		responseWriter.WriteHeader(http.StatusBadRequest)
 
 		return
 	}
 
+	//TODO: Do
+	var TODO_KEY interface{} = "test-key"
+
 	if !h.nodeConfiguration.ValidateLocationUpdate {
-		h.store.SetAndForget(updateLocationRequest.Id, updateLocationRequest.Location)
+		h.store.SetAndForget(TODO_KEY.(K), *updateLocationRequest)
 
 		responseWriter.WriteHeader(http.StatusOK)
 
 		return
 	}
 
-	if setResult := h.store.Set(updateLocationRequest.Id, updateLocationRequest.Location); setResult != nil {
+	if setResult := h.store.Set(TODO_KEY.(K), *updateLocationRequest); setResult != nil {
 		responseWriter.WriteHeader(http.StatusBadRequest)
 
 		return
@@ -93,9 +116,10 @@ func (h *HttpHandler[K]) handleUpdateLocationRequest(responseWriter http.Respons
 	responseWriter.WriteHeader(http.StatusOK)
 }
 
-func NewHttpHandler[K stores.StoreKey](nodeConfiguration NodeConfiguration, store StoreNode[K]) *HttpHandler[K] {
+func NewHttpHandler[K mapping.ClusteredMarkerKey](markerCluster mapping.MarkerCluster[K], nodeConfiguration NodeConfiguration, store StoreNode[K]) *HttpHandler[K] {
 	return &HttpHandler[K]{
-		nodeConfiguration: nodeConfiguration,
+		markerCluster:     &markerCluster,
+		nodeConfiguration: &nodeConfiguration,
 		store:             store,
 	}
 }

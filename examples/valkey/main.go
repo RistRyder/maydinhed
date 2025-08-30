@@ -9,17 +9,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/ristryder/maydinhed/mapping"
 	mkafka "github.com/ristryder/maydinhed/messaging/kafka"
 	"github.com/ristryder/maydinhed/raft"
-	"github.com/ristryder/maydinhed/stores"
 	mvalkey "github.com/ristryder/maydinhed/stores/valkey"
 	"github.com/valkey-io/valkey-go"
 )
 
-func joinCluster[K stores.StoreKey](leaderAddress string, node *raft.Node[K]) error {
+func joinCluster[K mapping.ClusteredMarkerKey](leaderAddress string, node *raft.Node[K]) error {
 	requestBytes, marshalErr := json.Marshal(map[string]string{"address": node.RaftAddress, "id": node.Id})
 	if marshalErr != nil {
 		return errors.Wrap(marshalErr, "failed to serialize join request")
@@ -48,13 +49,15 @@ func main() {
 	flag.StringVar(&raftDirectory, "raftDirectory", "", "Directory to store Raft data")
 	flag.Parse()
 
+	markerCluster := mapping.NewMarkerCluster[string](*mapping.NewMarkerClusterConfiguration(5 * time.Second))
+
 	nodeConfiguration := raft.NewNodeConfiguration(true, true, false)
 
 	kafkaOptions := &kafka.ConfigMap{
 		"bootstrap.servers": "localhost:9092",
 		"acks":              "all",
 		"auto.offset.reset": "latest"}
-	kafkaMessenger, kafkaMessengerErr := mkafka.New[string](kafkaOptions, nil, kafkaOptions)
+	kafkaMessenger, kafkaMessengerErr := mkafka.New[string](kafkaOptions, nil, *markerCluster, kafkaOptions)
 	if kafkaMessengerErr != nil {
 		log.Fatal(kafkaMessengerErr)
 	}
@@ -81,7 +84,7 @@ func main() {
 		log.Fatal(openErr)
 	}
 
-	listener, listenerErr := raft.NewHttpListener(httpAddress, *nodeConfiguration, node)
+	listener, listenerErr := raft.NewHttpListener(httpAddress, *markerCluster, *nodeConfiguration, node)
 	if listenerErr != nil {
 		log.Fatal(listenerErr)
 	}
@@ -103,9 +106,6 @@ func main() {
 	terminate := make(chan os.Signal, 1)
 	signal.Notify(terminate, os.Interrupt)
 	<-terminate
-	if shutdownErr := node.Shutdown(); shutdownErr != nil {
-		log.Fatal(shutdownErr)
-	} else {
-		log.Println("finished")
-	}
+
+	node.Shutdown()
 }

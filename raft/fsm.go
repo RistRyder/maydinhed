@@ -6,16 +6,17 @@ import (
 	"io"
 
 	"github.com/hashicorp/raft"
+	"github.com/ristryder/maydinhed/mapping"
 	"github.com/ristryder/maydinhed/stores"
 )
 
-type RaftFsm[K stores.StoreKey] Node[K]
+type RaftFsm[K mapping.ClusteredMarkerKey] Node[K]
 
 func (f *RaftFsm[K]) applyDelete(key K) error {
 	return f.storeImpl.Delete(key)
 }
 
-func (f *RaftFsm[K]) applySet(key K, value stores.Location) error {
+func (f *RaftFsm[K]) applySet(key K, value mapping.Location) error {
 	return f.storeImpl.Set(key, value)
 }
 
